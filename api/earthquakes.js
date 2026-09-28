@@ -92,7 +92,7 @@ function fromRows(rows, year, minMagnitude) {
 export default async function handler(request, res) {
   if (request.method === 'OPTIONS') return send(res, json({}, 204));
   if (request.method !== 'GET') return send(res, json({ error: '只支持 GET 请求' }, 405));
-  const requestUrl = new URL(request.url, `https://${request.headers.get('host') || 'localhost'}`);
+  const requestUrl = new URL(request.url, `https://${request.headers?.host || 'localhost'}`);
   const params = requestUrl.searchParams;
   const year = Number(params.get('year'));
   const minMagnitude = Number(params.get('minmagnitude') || 2.5);
