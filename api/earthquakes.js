@@ -8,6 +8,13 @@ function json(body, status = 200, extraHeaders = {}) {
   });
 }
 
+async function send(res, response) {
+  if (!res || typeof res.end !== 'function') return response;
+  res.statusCode = response.status;
+  response.headers.forEach((value, key) => res.setHeader(key, value));
+  res.end(await response.text());
+}
+
 function toRow(feature) {
   const [longitude, latitude, depth] = feature.geometry.coordinates;
   const props = feature.properties;
@@ -82,26 +89,26 @@ function fromRows(rows, year, minMagnitude) {
   };
 }
 
-export default async function handler(request) {
-  if (request.method === 'OPTIONS') return json({}, 204);
-  if (request.method !== 'GET') return json({ error: '只支持 GET 请求' }, 405);
+export default async function handler(request, res) {
+  if (request.method === 'OPTIONS') return send(res, json({}, 204));
+  if (request.method !== 'GET') return send(res, json({ error: '只支持 GET 请求' }, 405));
   const requestUrl = new URL(request.url, `https://${request.headers.get('host') || 'localhost'}`);
   const params = requestUrl.searchParams;
   const year = Number(params.get('year'));
   const minMagnitude = Number(params.get('minmagnitude') || 2.5);
   const thisYear = new Date().getUTCFullYear();
-  if (!Number.isInteger(year) || year < 1900 || year > thisYear) return json({ error: `年份须在 1900 至 ${thisYear} 之间` }, 400);
-  if (!Number.isFinite(minMagnitude) || minMagnitude < 0 || minMagnitude > 9) return json({ error: '震级筛选范围无效' }, 400);
+  if (!Number.isInteger(year) || year < 1900 || year > thisYear) return send(res, json({ error: `年份须在 1900 至 ${thisYear} 之间` }, 400));
+  if (!Number.isFinite(minMagnitude) || minMagnitude < 0 || minMagnitude > 9) return send(res, json({ error: '震级筛选范围无效' }, 400));
   const refresh = params.get('refresh') === '1';
   const cacheControl = refresh ? 'no-store' : 'public, s-maxage=3600, stale-while-revalidate=86400';
   try {
     if (!refresh && process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
       const rows = await readCachedYear(year);
-      if (rows) return json(fromRows(rows, year, minMagnitude), 200, { 'cache-control': cacheControl });
+      if (rows) return send(res, json(fromRows(rows, year, minMagnitude), 200, { 'cache-control': cacheControl }));
     }
     const search = new URLSearchParams({ format: 'geojson', starttime: `${year}-01-01`, endtime: `${year + 1}-01-01`, minmagnitude: '2.5', orderby: 'time-asc', limit: String(MAX_EVENTS) });
     const upstream = await fetch(`${USGS_ENDPOINT}?${search}`, { headers: { accept: 'application/geo+json' } });
-    if (!upstream.ok) return json({ error: `USGS 目录暂不可用（${upstream.status}）` }, 502, { 'cache-control': 'no-store' });
+    if (!upstream.ok) return send(res, json({ error: `USGS 目录暂不可用（${upstream.status}）` }, 502, { 'cache-control': 'no-store' }));
     const catalog = await upstream.json();
     const catalogFeatures = catalog.features || [];
     const wasCapped = (catalog.metadata?.count ?? catalogFeatures.length) >= MAX_EVENTS;
@@ -109,9 +116,9 @@ export default async function handler(request) {
     catalog.source = 'usgs';
     catalog.features = catalogFeatures.filter((feature) => Number(feature.properties.mag) >= minMagnitude);
     catalog.metadata = { ...catalog.metadata, year, minmagnitude: minMagnitude, capped: wasCapped };
-    return json(catalog, 200, { 'cache-control': cacheControl });
+    return send(res, json(catalog, 200, { 'cache-control': cacheControl }));
   } catch (error) {
     console.error('Earthquake catalog request failed:', error);
-    return json({ error: '读取地震目录失败，请稍后重试。' }, 502, { 'cache-control': 'no-store' });
+    return send(res, json({ error: '读取地震目录失败，请稍后重试。' }, 502, { 'cache-control': 'no-store' }));
   }
 }
