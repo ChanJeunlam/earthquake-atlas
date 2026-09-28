@@ -117,7 +117,7 @@ https://earthquake-atlas.vercel.app/api/earthquakes?year=2026&minmagnitude=2.5
 https://earthquake-atlas.vercel.app/api/earthquakes?year=2025&minmagnitude=2.5
 ```
 
-浏览器打开第一条应看到 JSON。`metadata.count` 或 `features.length` 应大于 0（如果所选年份/阈值确有事件）。如是 HTML 错误页，先看 Vercel Logs 与部署提交；如 JSON 中 `error` 提到 USGS，则是上游访问或响应问题；如数据能从 USGS 返回但 Supabase 写失败，则检查两个环境变量、表结构/RLS 和 Supabase API 日志。
+Supabase SQL 查询已确认 `earthquakes` 有 20,000 条记录，`catalog_years` 有 2026 年标记；数据库凭证、写入和缓存标记已正常工作。页面检查时仍显示 `Failed to fetch`，所以当时的空白是页面没有拿到 API 响应，不是数据库空表。最新 API 代码部署后，再打开上面的 API 地址确认 HTTP 200 和 GeoJSON；如果仍失败，查看 Vercel Logs 最新请求，区分函数运行错误、浏览器网络/跨域拦截或 USGS 上游故障。
 
 ## 9. 页面字体和空白显示排查
 
