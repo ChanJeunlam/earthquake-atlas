@@ -51,9 +51,21 @@ async function storeCatalog(features, year, capped) {
   }
   await supabaseRequest('catalog_years?on_conflict=year', { method: 'POST', headers: { prefer: 'resolution=merge-duplicates,return=minimal' }, body: JSON.stringify({ year, minimum_magnitude: 2.5, event_count: rows.length, catalog_version: CATALOG_VERSION, is_capped: capped, loaded_at: new Date().toISOString() }) });
 }
-function fromRows(cache, year, minMagnitude) {
-  const features = cache.rows.filter((row) => Number(row.magnitude) >= minMagnitude).map((row) => ({ type: 'Feature', id: row.usgs_id, properties: { mag: row.magnitude, place: row.place, time: Date.parse(row.occurred_at), updated: Date.parse(row.occurred_at), url: row.event_url, type: row.event_type }, geometry: { type: 'Point', coordinates: [row.longitude, row.latitude, row.depth_km] } }));
-  return { type: 'FeatureCollection', metadata: { generated: Date.now(), title: `USGS Earthquakes, ${year}`, count: features.length, year, minmagnitude: minMagnitude, capped: cache.capped }, source: 'supabase', features };
+function makeResult(features, year, minMagnitude, capped, source, month, compact) {
+  const scoped = features.filter((feature) => Number(feature.properties.mag) >= minMagnitude && (!month || new Date(feature.properties.time).getUTCMonth() + 1 === month));
+  const renderFeatures = compact && !month && scoped.length > 5000
+    ? scoped.filter((_, index) => index % Math.ceil(scoped.length / 5000) === 0)
+    : scoped;
+  return {
+    type: 'FeatureCollection',
+    metadata: { generated: Date.now(), title: `USGS Earthquakes, ${year}`, count: scoped.length, renderedCount: renderFeatures.length, year, month, minmagnitude: minMagnitude, capped },
+    source,
+    features: renderFeatures
+  };
+}
+function fromRows(cache, year, minMagnitude, month, compact) {
+  const features = cache.rows.map((row) => ({ type: 'Feature', id: row.usgs_id, properties: { mag: row.magnitude, place: row.place, time: Date.parse(row.occurred_at), updated: Date.parse(row.occurred_at), url: row.event_url, type: row.event_type }, geometry: { type: 'Point', coordinates: [row.longitude, row.latitude, row.depth_km] } }));
+  return makeResult(features, year, minMagnitude, cache.capped, 'supabase', month, compact);
 }
 async function fetchCompleteYear(year) {
   const periods = Array.from({ length: 12 }, (_, index) => {
@@ -80,20 +92,22 @@ export default async function handler(request, res) {
   const params = requestUrl.searchParams;
   const year = Number(params.get('year'));
   const minMagnitude = Number(params.get('minmagnitude') || 2.5);
+  const month = Number(params.get('month') || 0);
+  const compact = params.get('compact') === '1';
   const thisYear = new Date().getUTCFullYear();
   if (!Number.isInteger(year) || year < 1900 || year > thisYear) return send(res, json({ error: `年份须在 1900 至 ${thisYear} 之间` }, 400));
   if (!Number.isFinite(minMagnitude) || minMagnitude < 0 || minMagnitude > 9) return send(res, json({ error: '震级筛选范围无效' }, 400));
+  if (!Number.isInteger(month) || month < 0 || month > 12) return send(res, json({ error: '月份须为 0（全年）至 12' }, 400));
   const refresh = params.get('refresh') === '1';
   const cacheControl = refresh ? 'no-store' : 'public, s-maxage=3600, stale-while-revalidate=86400';
   try {
     if (!refresh && process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
       const cache = await readCachedYear(year, minMagnitude);
-      if (cache) return send(res, json(fromRows(cache, year, minMagnitude), 200, { 'cache-control': cacheControl }));
+      if (cache) return send(res, json(fromRows(cache, year, minMagnitude, month, compact), 200, { 'cache-control': cacheControl }));
     }
     const catalog = await fetchCompleteYear(year);
     try { await storeCatalog(catalog.features, year, catalog.capped); } catch (error) { console.error('Supabase catalog cache write failed:', error.message); }
-    const features = catalog.features.filter((feature) => Number(feature.properties.mag) >= minMagnitude);
-    const result = { ...catalog, type: 'FeatureCollection', source: 'usgs', features, metadata: { title: `USGS Earthquakes, ${year}`, count: features.length, year, minmagnitude: minMagnitude, capped: catalog.capped } };
+    const result = makeResult(catalog.features, year, minMagnitude, catalog.capped, 'usgs', month, compact);
     return send(res, json(result, 200, { 'cache-control': cacheControl }));
   } catch (error) {
     console.error('Earthquake catalog request failed:', error);
