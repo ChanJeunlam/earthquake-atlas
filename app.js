@@ -16,8 +16,8 @@
     animation: false, timeline: false, baseLayerPicker: false, geocoder: false,
     homeButton: false, sceneModePicker: false, navigationHelpButton: false,
     fullscreenButton: false, infoBox: false, selectionIndicator: false,
+    baseLayer: new Cesium.ImageryLayer(new Cesium.OpenStreetMapImageryProvider({ url: 'https://tile.openstreetmap.org/' })),
     shouldAnimate: true, requestRenderMode: false,
-    imageryProvider: new Cesium.OpenStreetMapImageryProvider({ url: 'https://tile.openstreetmap.org/' }),
     terrainProvider: new Cesium.EllipsoidTerrainProvider()
   });
   viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString('#0a1723');
@@ -29,6 +29,7 @@
   viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(12, 18, 25500000), orientation: { heading: 0, pitch: -Cesium.Math.PI_OVER_TWO, roll: 0 } });
 
   let selectedMagnitude = 2.5;
+  let selectedMonth = 0;
   let allEvents = [];
   let eventEntities = [];
   let spinning = true;
@@ -39,13 +40,19 @@
   const formatCount = new Intl.NumberFormat('en-US');
 
   const colorForDepth = (depth) => {
-    const t = Math.max(0, Math.min(1, (depth || 0) / 700));
-    return Cesium.Color.fromHsl(0.045 + t * 0.49, 0.82, 0.62, 0.9);
+    const km = Math.max(0, Number(depth) || 0);
+    if (km < 70) return Cesium.Color.fromCssColorString('#ff765e').withAlpha(0.94);
+    if (km < 300) return Cesium.Color.fromCssColorString('#55d2a2').withAlpha(0.94);
+    return Cesium.Color.fromCssColorString('#62a8ff').withAlpha(0.94);
   };
   function drawEvents() {
     eventEntities.forEach((entity) => viewer.entities.remove(entity));
     eventEntities = [];
-    const events = allEvents.filter((event) => Number(event.properties.mag) >= selectedMagnitude);
+    const events = allEvents.filter((event) => {
+      if (Number(event.properties.mag) < selectedMagnitude) return false;
+      if (!selectedMonth) return true;
+      return new Date(event.properties.time).getUTCMonth() + 1 === selectedMonth;
+    });
     for (const event of events) {
       const [longitude, latitude, rawDepth] = event.geometry.coordinates;
       if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) continue;
@@ -69,7 +76,22 @@
   function updateYearLabels(year) {
     document.querySelector('#eyebrow-year').textContent = year;
     document.querySelector('#timeline-year').textContent = year;
-    document.querySelector('#date-range').textContent = `JAN 01 — DEC 31, ${year}`;
+    updateTimelineRange(year);
+  }
+  function updateTimelineRange(year) {
+    const monthNames = ['JAN','FEB','MAR','APR','MAY','JUN','JUL','AUG','SEP','OCT','NOV','DEC'];
+    const dateRange = document.querySelector('#date-range');
+    const monthLabel = document.querySelector('#month-label');
+    if (!selectedMonth) {
+      dateRange.textContent = `JAN 01 — DEC 31, ${year}`;
+      monthLabel.textContent = '全年 · 拖动滑块选择月份';
+    } else {
+      const lastDay = new Date(Date.UTC(year, selectedMonth, 0)).getUTCDate();
+      dateRange.textContent = `${monthNames[selectedMonth - 1]} 01 — ${monthNames[selectedMonth - 1]} ${String(lastDay).padStart(2, '0')}, ${year}`;
+      monthLabel.textContent = `${year}年${selectedMonth}月`;
+    }
+    document.querySelector('#track-progress').style.width = `${selectedMonth / 12 * 100}%`;
+    document.querySelector('#month-range').value = String(selectedMonth);
   }
   function showEvent(event) {
     const [longitude, latitude, depth] = event.geometry.coordinates;
@@ -101,7 +123,8 @@
       if (id !== requestId) return;
       allEvents = payload.features || [];
       drawEvents();
-      setStatus('loaded', `${payload.source === 'supabase' ? 'SUPABASE CACHE' : 'USGS CATALOG'} · ${formatCount.format(allEvents.length)} EVENTS`);
+      const countLabel = payload.metadata?.capped ? `至少 ${formatCount.format(allEvents.length)}` : formatCount.format(allEvents.length);
+      setStatus('loaded', `${year} 年目录 · ${countLabel} 条${payload.source === 'supabase' ? ' · 数据库缓存' : ' · USGS'}`);
       const depths = allEvents.map((event) => Number(event.geometry.coordinates[2]) || 0);
       if (depths.length) document.querySelector('#depth-range').textContent = `${Math.min(...depths).toFixed(0)} – ${Math.max(...depths).toFixed(0)} KM`;
     } catch (error) {
@@ -122,6 +145,11 @@
     camera.rotate(Cesium.Cartesian3.UNIT_Z, -0.000035 * clock.multiplier);
   });
   yearSelect.addEventListener('change', () => loadYear(Number(yearSelect.value)));
+  document.querySelector('#month-range').addEventListener('input', (event) => {
+    selectedMonth = Number(event.currentTarget.value);
+    updateTimelineRange(Number(yearSelect.value));
+    drawEvents();
+  });
   document.querySelectorAll('.mag-option').forEach((button) => button.addEventListener('click', () => {
     selectedMagnitude = Number(button.dataset.mag);
     document.querySelectorAll('.mag-option').forEach((item) => item.classList.toggle('active', item === button));
@@ -143,3 +171,4 @@
   yearSelect.value = String(currentYear);
   loadYear(currentYear);
 })();
+
