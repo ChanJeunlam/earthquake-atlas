@@ -117,7 +117,7 @@ https://earthquake-atlas.vercel.app/api/earthquakes?year=2026&minmagnitude=2.5
 https://earthquake-atlas.vercel.app/api/earthquakes?year=2025&minmagnitude=2.5
 ```
 
-Supabase SQL 查询已确认 `earthquakes` 有 20,000 条记录，`catalog_years` 有 2026 年标记；数据库凭证、写入和缓存标记已正常工作。页面检查时仍显示 `Failed to fetch`，所以当时的空白是页面没有拿到 API 响应，不是数据库空表。最新 API 代码部署后，再打开上面的 API 地址确认 HTTP 200 和 GeoJSON；如果仍失败，查看 Vercel Logs 最新请求，区分函数运行错误、浏览器网络/跨域拦截或 USGS 上游故障。
+Supabase SQL 查询已确认 `earthquakes` 有 20,000 条记录，`catalog_years` 有 2026 年标记；数据库凭证、写入和缓存标记正常。最初页面显示 `Failed to fetch`，Vercel Logs 查到相对 URL 解析错误、Node headers 类型不匹配，随后首次写入/缓存读取的串行网络往返也过多。修复后重新加载 GitHub Pages，页面状态显示 `SUPABASE CACHE · 20,000 EVENTS`，目录计数为 20,000，三维地球上可见事件点，确认页面、Vercel API 和 Supabase 缓存已贯通。单年上限为 20,000 条，达到上限时目录可能被截断；API 的 `metadata.capped` 会标记此情况。
 
 ## 9. 页面字体和空白显示排查
 
