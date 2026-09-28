@@ -5,3 +5,9 @@
 /* Improve readability on desktop and mobile displays. */
 .top-context{font-size:13px}.utc-clock{font-size:12px}.eyebrow{font-size:11px}.intro p{font-size:15px}.panel-kicker{font-size:12px}.panel-index{font-size:10px}.field-label{font-size:13px}.field-label span,.year-range{font-size:10px}.mag-option{font-size:11px}.legend-title,.legend-label,.depth-key{font-size:10px}.tool-button{font-size:11px}.status-chip{font-size:10px}.event-card-kicker,.event-card a{font-size:10px}.event-place{font-size:14px}.event-meta{font-size:10px}.timeline-kicker{font-size:10px}.timeline-year{font-size:20px}.timeline-count strong{font-size:16px}.timeline-count span{font-size:11px}.timeline-footer,.map-footer{font-size:9px}
 @media(max-width:760px){.top-context{font-size:11px}.intro p{font-size:13px}.panel-kicker{font-size:11px}.field-label{font-size:12px}.mag-option{font-size:10px}.map-footer{font-size:8px}}
+
+
+/* Final readability pass: raise secondary labels while preserving the layout. */
+.utc-clock,.eyebrow,.panel-index,.field-label span,.year-range,.legend-title,.legend-label,.depth-key,.event-card-kicker,.event-meta,.event-card a,.timeline-kicker,.timeline-footer,.map-footer{font-size:12px}
+.top-context,.tool-button,.status-chip,.mag-option{font-size:13px}.panel-kicker{font-size:14px}.field-label{font-size:15px}.timeline-count span{font-size:12px}
+@media(max-width:760px){.top-context{font-size:12px}.utc-clock,.eyebrow,.panel-index,.field-label span,.year-range,.legend-title,.legend-label,.depth-key,.event-card-kicker,.event-meta,.event-card a,.timeline-kicker,.timeline-footer,.map-footer{font-size:11px}.field-label{font-size:13px}.panel-kicker{font-size:12px}}
