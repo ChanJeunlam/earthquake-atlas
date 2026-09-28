@@ -28,6 +28,54 @@
   viewer.scene.globe.depthTestAgainstTerrain = false;
   viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(12, 18, 25500000), orientation: { heading: 0, pitch: -Cesium.Math.PI_OVER_TWO, roll: 0 } });
 
+  const countryLabels = [];
+  async function addCountryLayer() {
+    try {
+      const countries = await Cesium.GeoJsonDataSource.load('./data/countries.geojson', {
+        stroke: Cesium.Color.fromCssColorString('#d4e5ee').withAlpha(0.72),
+        strokeWidth: 1.35,
+        fill: Cesium.Color.fromCssColorString('#5f8798').withAlpha(0.025),
+        clampToGround: true
+      });
+      await viewer.dataSources.add(countries);
+      const time = Cesium.JulianDate.now();
+      for (const country of countries.entities.values) {
+        const value = (key) => country.properties?.[key]?.getValue(time);
+        const longitude = Number(value('label_x'));
+        const latitude = Number(value('label_y'));
+        if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) continue;
+        const rank = Number(value('label_rank')) || 7;
+        const name = value('name_zh') || value('name_en');
+        const label = viewer.entities.add({
+          position: Cesium.Cartesian3.fromDegrees(longitude, latitude, 12000),
+          label: {
+            text: name,
+            font: '600 14px "Noto Sans SC", sans-serif',
+            fillColor: Cesium.Color.fromCssColorString('#f5f8fb'),
+            outlineColor: Cesium.Color.fromCssColorString('#07111c'),
+            outlineWidth: 3,
+            style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+            horizontalOrigin: Cesium.HorizontalOrigin.CENTER,
+            verticalOrigin: Cesium.VerticalOrigin.CENTER,
+            distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 60000000),
+            scaleByDistance: new Cesium.NearFarScalar(12000000, 1.05, 36000000, 0.62)
+          }
+        });
+        countryLabels.push({ label, rank });
+      }
+      updateCountryLabels();
+    } catch (error) {
+      console.error('Country boundaries or labels could not be loaded:', error.message);
+    }
+  }
+  function updateCountryLabels() {
+    const height = viewer.camera.positionCartographic.height;
+    const maxRank = height > 18000000 ? 2 : height > 10000000 ? 4 : 7;
+    countryLabels.forEach(({ label, rank }) => { label.show = rank <= maxRank; });
+  }
+  viewer.camera.moveEnd.addEventListener(updateCountryLabels);
+  addCountryLayer();
+
   let selectedMagnitude = 2.5;
   let selectedMonth = 0;
   let allEvents = [];
@@ -38,6 +86,24 @@
   const statusText = document.querySelector('#status-text');
   const eventCard = document.querySelector('#event-card');
   const formatCount = new Intl.NumberFormat('en-US');
+  const compactMode = window.matchMedia('(max-width: 760px)').matches;
+
+  async function fetchUSGSDirect(year, minMagnitude) {
+    const months = await Promise.all(Array.from({ length: 12 }, async (_, index) => {
+      const month = index + 1;
+      const starttime = `${year}-${String(month).padStart(2, '0')}-01`;
+      const endtime = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
+      const query = new URLSearchParams({ format: 'geojson', starttime, endtime, minmagnitude: '2.5', orderby: 'time-asc', limit: '20000' });
+      const response = await fetch(`https://earthquake.usgs.gov/fdsnws/event/1/query?${query}`);
+      if (!response.ok) throw new Error(`USGS ${response.status}`);
+      const catalog = await response.json();
+      const features = catalog.features || [];
+      return { features, capped: (catalog.metadata?.count ?? features.length) >= 20000 };
+    }));
+    const features = months.flatMap((month) => month.features).sort((a, b) => a.properties.time - b.properties.time)
+      .filter((event) => Number(event.properties.mag) >= minMagnitude);
+    return { type: 'FeatureCollection', source: 'usgs-direct', features, metadata: { year, minmagnitude: minMagnitude, count: features.length, capped: months.some((month) => month.capped) } };
+  }
 
   const colorForDepth = (depth) => {
     const km = Math.max(0, Number(depth) || 0);
@@ -46,6 +112,7 @@
     return Cesium.Color.fromCssColorString('#62a8ff').withAlpha(0.94);
   };
   function drawEvents() {
+    eventCard.classList.add('hidden');
     eventEntities.forEach((entity) => viewer.entities.remove(entity));
     eventEntities = [];
     const events = allEvents.filter((event) => {
@@ -53,7 +120,9 @@
       if (!selectedMonth) return true;
       return new Date(event.properties.time).getUTCMonth() + 1 === selectedMonth;
     });
-    for (const event of events) {
+    const stride = Math.max(1, Math.ceil(events.length / (compactMode ? 6000 : 24000)));
+    const renderEvents = events.filter((_, index) => index % stride === 0);
+    for (const event of renderEvents) {
       const [longitude, latitude, rawDepth] = event.geometry.coordinates;
       if (!Number.isFinite(longitude) || !Number.isFinite(latitude)) continue;
       const magnitude = Number(event.properties.mag) || 0;
@@ -114,24 +183,29 @@
       url.searchParams.set('year', year);
       url.searchParams.set('minmagnitude', String(selectedMagnitude));
       if (force) url.searchParams.set('refresh', '1');
-      const response = await fetch(url, { headers: { Accept: 'application/json' } });
-      if (!response.ok) {
-        const detail = await response.json().catch(() => ({}));
-        throw new Error(detail.error || `目录服务返回 ${response.status}`);
+      let payload;
+      try {
+        const response = await fetch(url, { headers: { Accept: 'application/json' } });
+        if (!response.ok) throw new Error(`Vercel API ${response.status}`);
+        payload = await response.json();
+      } catch (apiError) {
+        setStatus('', '后端暂不可达，正在直连 USGS');
+        payload = await fetchUSGSDirect(year, selectedMagnitude);
       }
-      const payload = await response.json();
       if (id !== requestId) return;
       allEvents = payload.features || [];
       drawEvents();
       const countLabel = payload.metadata?.capped ? `至少 ${formatCount.format(allEvents.length)}` : formatCount.format(allEvents.length);
-      setStatus('loaded', `${year} 年目录 · ${countLabel} 条${payload.source === 'supabase' ? ' · 数据库缓存' : ' · USGS'}`);
+      const sourceLabel = payload.source === 'supabase' ? '数据库缓存' : payload.source === 'usgs-direct' ? 'USGS 直连' : 'USGS';
+      setStatus('loaded', `${year} 年目录 · ${countLabel} 条 · ${sourceLabel}`);
+      document.querySelector('#render-note').textContent = compactMode && allEvents.length > 6000 ? '地图显示代表性抽样点；数量仍按完整目录统计' : '';
       const depths = allEvents.map((event) => Number(event.geometry.coordinates[2]) || 0);
       if (depths.length) document.querySelector('#depth-range').textContent = `${Math.min(...depths).toFixed(0)} – ${Math.max(...depths).toFixed(0)} KM`;
     } catch (error) {
       if (id !== requestId) return;
       allEvents = [];
       drawEvents();
-      setStatus('error', apiBase.includes('YOUR-VERCEL-PROJECT') ? '请先配置 Vercel API 地址' : error.message);
+      setStatus('error', apiBase.includes('YOUR-VERCEL-PROJECT') ? '请配置 Vercel API 地址' : `目录连接失败；请在微信右上角“…”选择“在浏览器打开”重试。(${error.message})`);
     }
   }
 
@@ -144,7 +218,7 @@
     const camera = viewer.camera;
     camera.rotate(Cesium.Cartesian3.UNIT_Z, -0.000035 * clock.multiplier);
   });
-  yearSelect.addEventListener('change', () => loadYear(Number(yearSelect.value)));
+  yearSelect.addEventListener('change', () => { selectedMonth = 0; loadYear(Number(yearSelect.value)); });
   document.querySelector('#month-range').addEventListener('input', (event) => {
     selectedMonth = Number(event.currentTarget.value);
     updateTimelineRange(Number(yearSelect.value));
