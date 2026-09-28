@@ -53,3 +53,25 @@
 }
 @media(max-width:390px){.control-panel{width:min(176px,45vw);right:7px;padding:10px 9px}.intro{width:46%}.intro h1{font-size:26px}.legend{gap:5px}.legend-sample{font-size:10px}.depth-sample{font-size:9px}.timeline{left:7px;right:7px;padding:9px}.timeline-footer{font-size:9px!important}}
 
+/* Mobile layout: keep the intro, filters, and month slider in separate zones. */
+@media(max-width:760px){
+  .intro{top:5%;left:5%;width:88%}
+  .intro h1{font-size:clamp(27px,7vw,34px);margin:13px 0 5px}
+  .status-chip{top:7px;left:auto;right:10px;transform:none;max-width:52vw}
+  .control-panel{top:34%;left:10px;right:10px;bottom:164px;width:auto;max-height:none;overflow-y:auto;padding:13px 15px}
+  .magnitude-options{gap:7px}.mag-option{height:36px;font-size:12px!important}
+  .legend{justify-content:flex-start;gap:16px}.legend-sample{font-size:12px}.depth-key{justify-content:flex-start!important;gap:16px!important}.depth-sample{font-size:11px}
+  .map-tools{right:12px;bottom:158px}
+  .timeline{left:10px;right:10px;bottom:10px;padding:10px 13px 9px}
+  .timeline-track{touch-action:none}
+  #month-range{height:32px;top:0;touch-action:none}
+  .track-labels{top:29px}
+}
+@media(max-height:760px) and (max-width:760px){
+  .control-panel{top:31%;bottom:150px;padding:10px 12px}
+  .panel-rule{margin:8px 0}
+  .legend-explain{margin:4px 0}
+  .map-tools{display:none}
+  .timeline{bottom:8px}
+}
+
