@@ -89,8 +89,8 @@
   const compactMode = window.matchMedia('(max-width: 760px)').matches;
 
   async function fetchUSGSDirect(year, minMagnitude) {
-    const months = await Promise.all(Array.from({ length: 12 }, async (_, index) => {
-      const month = index + 1;
+    const requestedMonths = selectedMonth ? [selectedMonth] : Array.from({ length: 12 }, (_, index) => index + 1);
+    const months = await Promise.all(requestedMonths.map(async (month) => {
       const starttime = `${year}-${String(month).padStart(2, '0')}-01`;
       const endtime = new Date(Date.UTC(year, month, 1)).toISOString().slice(0, 10);
       const query = new URLSearchParams({ format: 'geojson', starttime, endtime, minmagnitude: '2.5', orderby: 'time-asc', limit: '20000' });
@@ -100,9 +100,11 @@
       const features = catalog.features || [];
       return { features, capped: (catalog.metadata?.count ?? features.length) >= 20000 };
     }));
-    const features = months.flatMap((month) => month.features).sort((a, b) => a.properties.time - b.properties.time)
+    let features = months.flatMap((month) => month.features).sort((a, b) => a.properties.time - b.properties.time)
       .filter((event) => Number(event.properties.mag) >= minMagnitude);
-    return { type: 'FeatureCollection', source: 'usgs-direct', features, metadata: { year, minmagnitude: minMagnitude, count: features.length, capped: months.some((month) => month.capped) } };
+    const count = features.length;
+    if (compactMode && !selectedMonth && features.length > 5000) features = features.filter((_, index) => index % Math.ceil(features.length / 5000) === 0);
+    return { type: 'FeatureCollection', source: 'usgs-direct', features, metadata: { year, month: selectedMonth, minmagnitude: minMagnitude, count, renderedCount: features.length, capped: months.some((month) => month.capped) } };
   }
 
   const colorForDepth = (depth) => {
@@ -182,10 +184,18 @@
       const url = new URL(`${apiBase}/api/earthquakes`, window.location.href);
       url.searchParams.set('year', year);
       url.searchParams.set('minmagnitude', String(selectedMagnitude));
+      if (compactMode) {
+        url.searchParams.set('compact', '1');
+        url.searchParams.set('month', String(selectedMonth));
+      }
       if (force) url.searchParams.set('refresh', '1');
       let payload;
       try {
-        const response = await fetch(url, { headers: { Accept: 'application/json' } });
+        const controller = new AbortController();
+        const timeout = window.setTimeout(() => controller.abort(), 25000);
+        let response;
+        try { response = await fetch(url, { headers: { Accept: 'application/json' }, signal: controller.signal }); }
+        finally { window.clearTimeout(timeout); }
         if (!response.ok) throw new Error(`Vercel API ${response.status}`);
         payload = await response.json();
       } catch (apiError) {
@@ -195,10 +205,11 @@
       if (id !== requestId) return;
       allEvents = payload.features || [];
       drawEvents();
-      const countLabel = payload.metadata?.capped ? `至少 ${formatCount.format(allEvents.length)}` : formatCount.format(allEvents.length);
+      const catalogCount = Number(payload.metadata?.count ?? allEvents.length);
+      const countLabel = payload.metadata?.capped ? `至少 ${formatCount.format(catalogCount)}` : formatCount.format(catalogCount);
       const sourceLabel = payload.source === 'supabase' ? '数据库缓存' : payload.source === 'usgs-direct' ? 'USGS 直连' : 'USGS';
-      setStatus('loaded', `${year} 年目录 · ${countLabel} 条 · ${sourceLabel}`);
-      document.querySelector('#render-note').textContent = compactMode && allEvents.length > 6000 ? '地图显示代表性抽样点；数量仍按完整目录统计' : '';
+      setStatus('loaded', `${year}${selectedMonth ? `年${selectedMonth}月` : ' 年'}目录 · ${countLabel} 条 · ${sourceLabel}`);
+      document.querySelector('#render-note').textContent = compactMode && catalogCount > allEvents.length ? `地图显示 ${formatCount.format(allEvents.length)} 个点；目录共 ${formatCount.format(catalogCount)} 场` : '拖动圆点可查看单月';
       const depths = allEvents.map((event) => Number(event.geometry.coordinates[2]) || 0);
       if (depths.length) document.querySelector('#depth-range').textContent = `${Math.min(...depths).toFixed(0)} – ${Math.max(...depths).toFixed(0)} KM`;
     } catch (error) {
@@ -218,17 +229,21 @@
     const camera = viewer.camera;
     camera.rotate(Cesium.Cartesian3.UNIT_Z, -0.000035 * clock.multiplier);
   });
-  yearSelect.addEventListener('change', () => { selectedMonth = 0; loadYear(Number(yearSelect.value)); });
+  yearSelect.addEventListener('change', () => { selectedMonth = 0; updateYearLabels(Number(yearSelect.value)); loadYear(Number(yearSelect.value)); });
   document.querySelector('#month-range').addEventListener('input', (event) => {
     selectedMonth = Number(event.currentTarget.value);
     updateTimelineRange(Number(yearSelect.value));
-    drawEvents();
+    if (!compactMode) drawEvents();
+  });
+  document.querySelector('#month-range').addEventListener('change', () => {
+    if (compactMode) loadYear(Number(yearSelect.value));
   });
   document.querySelectorAll('.mag-option').forEach((button) => button.addEventListener('click', () => {
     selectedMagnitude = Number(button.dataset.mag);
     document.querySelectorAll('.mag-option').forEach((item) => item.classList.toggle('active', item === button));
     document.querySelector('#magnitude-label').textContent = `M ${selectedMagnitude.toFixed(1)}+`;
-    drawEvents();
+    if (compactMode) loadYear(Number(yearSelect.value));
+    else drawEvents();
   }));
   document.querySelector('#reload-year').addEventListener('click', () => loadYear(Number(yearSelect.value), { force: true }));
   document.querySelector('#reset-view').addEventListener('click', () => viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(12, 18, 25500000), duration: 1.2 }));
