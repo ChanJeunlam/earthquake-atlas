@@ -52,28 +52,28 @@ async function readCachedYear(year) {
   if (!markerResponse) return null;
   const marker = await markerResponse.json();
   if (!marker.length) return null;
-  const data = [];
   const pageSize = 1000;
-  for (let offset = 0; offset < MAX_EVENTS; offset += pageSize) {
+  const pages = await Promise.all(Array.from({ length: Math.ceil(MAX_EVENTS / pageSize) }, async (_, page) => {
+    const offset = page * pageSize;
     const query = new URLSearchParams({ select: 'usgs_id,occurred_at,magnitude,place,longitude,latitude,depth_km,event_url,event_type', occurred_at: `gte.${start}`, and: `(occurred_at.lt.${end},magnitude.gte.2.5)`, order: 'occurred_at.asc', limit: String(pageSize), offset: String(offset) });
     const response = await supabaseRequest(`earthquakes?${query}`);
     if (!response) return null;
-    const rows = await response.json();
-    data.push(...rows);
-    if (rows.length < pageSize) break;
-  }
-  return data;
+    return response.json();
+  }));
+  if (pages.some((page) => page === null)) return null;
+  return pages.flat();
 }
 
 async function storeCatalog(features, year, minMagnitude) {
   if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_ROLE_KEY) return;
   const rows = features.map(toRow).filter((row) => row.magnitude !== null && row.magnitude >= minMagnitude);
-  for (let start = 0; start < rows.length; start += 500) {
-    await supabaseRequest('earthquakes?on_conflict=usgs_id', {
+  const batches = Array.from({ length: Math.ceil(rows.length / 1000) }, (_, index) => rows.slice(index * 1000, (index + 1) * 1000));
+  for (let start = 0; start < batches.length; start += 5) {
+    await Promise.all(batches.slice(start, start + 5).map((batch) => supabaseRequest('earthquakes?on_conflict=usgs_id', {
       method: 'POST',
       headers: { prefer: 'resolution=merge-duplicates,return=minimal' },
-      body: JSON.stringify(rows.slice(start, start + 500))
-    });
+      body: JSON.stringify(batch)
+    })));
   }
   await supabaseRequest('catalog_years?on_conflict=year', {
     method: 'POST', headers: { prefer: 'resolution=merge-duplicates,return=minimal' },
